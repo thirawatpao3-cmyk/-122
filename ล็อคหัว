@@ -1,0 +1,163 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- Variables
+local AimbotEnabled = false
+local AimKey = Enum.UserInputType.MouseButton2 -- คลิกขวาค้างเพื่อล็อค
+local FOVRadius = 150 -- ปรับได้ตามภาพตัวอย่างก่อนหน้า
+local AimPartName = "Head"
+local Smoothness = 0.5
+local TeamCheck = true -- เปิดTeam Check ไว้เพื่อไม่ให้ล็อคเพื่อน
+
+-- Drawing Elements (FOV, Crosshair, Snapline)
+local FOVCircle = Drawing.new("Circle")
+local CrosshairH = Drawing.new("Line")
+local CrosshairV = Drawing.new("Line")
+local SnapLine = Drawing.new("Line")
+
+-- Setup Drawings (Basic)
+FOVCircle.Thickness = 1.5; FOVCircle.Color = Color3.fromRGB(255, 255, 255); FOVCircle.Transparency = 0.7
+SnapLine.Thickness = 1; SnapLine.Color = Color3.fromRGB(255, 255, 0); SnapLine.Transparency = 1
+CrosshairH.Color = Color3.fromRGB(255, 255, 255); CrosshairV.Color = Color3.fromRGB(255, 255, 255)
+
+local CrosshairSize = 10
+
+-- [NEW FUNCTION] ฟังก์ชันตรวจสอบว่ามองเห็นเป้าหมายหรือไม่
+local function IsVisible(part, character)
+    local Origin = Camera.CFrame.Position
+    local Destination = part.Position
+    local Direction = (Destination - Origin)
+    
+    -- สร้าง Parameter สำหรับ Raycast
+    local RayParams = RaycastParams.new()
+    RayParams.FilterType = Enum.RaycastFilterType.Exclude -- ยกเว้นวัตถุในลิสต์
+    -- ยกเว้น ตัวคุณเอง, ตัวละครเป้าหมาย (เพื่อให้ Ray ผ่านไปโดน Part ได้)
+    RayParams.FilterDescendantsInstances = {LocalPlayer.Character, character, Camera}
+    RayParams.IgnoreWater = true
+    
+    -- ทำการ Raycast
+    local Result = Workspace:Raycast(Origin, Direction, RayParams)
+    
+    -- ถ้า Result เป็น nil แสดงว่าไม่ชนอะไรเลยระหว่างทาง = มองเห็น
+    if Result == nil then
+        return true
+    else
+        -- ถ้าชนวัตถุอื่น (เช่น กำแพง)
+        return false
+    end
+end
+
+-- Function: หาผู้เล่นที่ใกล้ที่สุดและมองเห็นได้ใน FOV
+local function GetClosestTarget()
+    local ClosestTarget = nil
+    local ClosestPart = nil
+    local ShortestDistance = FOVRadius
+    local MousePos = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        -- ตรวจสอบเงื่อนไขเบื้องต้น: ไม่ใช่ตัวเอง, มีตัวละคร, ไม่ใช่ทีมเดียวกัน (ถ้าเปิดTeam Check)
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild(AimPartName) and 
+           player.Character:FindFirstChildOfClass("Humanoid") then
+           
+           if TeamCheck and player.Team == LocalPlayer.Team then continue end -- ข้ามถ้าทีมเดียวกัน
+
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid.Health > 0 then
+                local part = player.Character[AimPartName]
+                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                
+                if onScreen then
+                    local distance = (Vector2.new(screenPos.X, screenPos.Y) - MousePos).Magnitude
+                    
+                    -- ตรวจสอบระยะ FOV และ [NEW] ตรวจสอบ Visibility Check
+                    if distance < ShortestDistance and IsVisible(part, player.Character) then
+                        ShortestDistance = distance
+                        ClosestTarget = player
+                        ClosestPart = part
+                    end
+                end
+            end
+        end
+    end
+    return ClosestPart
+end
+
+-- Main Window
+local Window = Rayfield:CreateWindow({
+   Name = "LOCK TARGET HUB (VISIBILITY)",
+   LoadingTitle = "Loading Aimbot System with Raycasting...",
+   LoadingSubtitle = "by Sirius",
+   ConfigurationSaving = { Enabled = false }
+})
+
+local CombatTab = Window:CreateTab("COMBAT", 4483362458)
+
+local ToggleAimbot = CombatTab:CreateToggle({
+   Name = "Enable Aimbot (Wall Check)",
+   CurrentValue = false,
+   Flag = "AimbotToggle",
+   Callback = function(Value)
+       AimbotEnabled = Value
+       FOVCircle.Visible = Value
+       CrosshairH.Visible = Value
+       CrosshairV.Visible = Value
+       if not Value then SnapLine.Visible = false end
+   end,
+})
+
+local FOVSlider = CombatTab:CreateSlider({
+   Name = "FOV Size",
+   Range = {1, 100}, -- รักษาช่วง 1-100 px ตามคำขอเก่า
+   Increment = 1,
+   Suffix = "px",
+   CurrentValue = 75,
+   Flag = "FOVSlider",
+   Callback = function(Value)
+       FOVRadius = Value
+       FOVCircle.Radius = Value
+   end,
+})
+
+-- RenderStepped Loop for Visuals and Aimbot
+RunService.RenderStepped:Connect(function()
+    local MousePos = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    FOVCircle.Position = MousePos
+    FOVCircle.Radius = FOVRadius
+
+    -- อัปเดต Crosshair
+    if CrosshairH.Visible then
+        CrosshairH.From = Vector2.new(MousePos.X - CrosshairSize, MousePos.Y); CrosshairH.To = Vector2.new(MousePos.X + CrosshairSize, MousePos.Y)
+        CrosshairV.From = Vector2.new(MousePos.X, MousePos.Y - CrosshairSize); CrosshairV.To = Vector2.new(MousePos.X, MousePos.Y + CrosshairSize)
+    end
+
+    -- ได้เฉพาะ Part ที่ "ใกล้ที่สุดและมองเห็นได้"
+    local targetPart = GetClosestTarget()
+    local rightClickPressed = UserInputService:IsMouseButtonPressed(AimKey)
+
+    -- จัดการ Snapline (เส้นโยง)
+    if AimbotEnabled and targetPart then
+        local targetPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+        if onScreen then
+            SnapLine.From = MousePos
+            SnapLine.To = Vector2.new(targetPos.X, targetPos.Y)
+            SnapLine.Visible = true
+        else
+            SnapLine.Visible = false
+        end
+    else
+        SnapLine.Visible = false
+    end
+
+    -- การล็อคเป้า
+    if AimbotEnabled and rightClickPressed and targetPart then
+        local targetCFrame = CFrame.new(Camera.CFrame.Position, targetPart.Position)
+        Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, Smoothness)
+    end
+end)
